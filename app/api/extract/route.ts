@@ -2,7 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { CATEGORIES, isCategory, type Category } from "@/lib/taxonomy";
 import { canonicalProductName, compatibleUnits } from "@/lib/catalog";
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.6-flash";
 const ACCEPTED_FORMATS =
   "m4a, mp3, wav, webm, ogg, jpg, jpeg, png, webp, or heic";
 const EXTENSION_MIME_TYPES: Record<string, string> = {
