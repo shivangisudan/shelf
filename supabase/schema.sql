@@ -47,9 +47,11 @@ alter table public.products add constraint products_low_stock_threshold_check ch
 -- are the same product. This mirrors canonicalProductName in lib/catalog.ts and
 -- is the only copy of the rule in SQL — the dedupe migration calls it too.
 --
--- [:alnum:] rather than a-zA-Z0-9 so Devanagari, Tamil and Bengali names keep a
--- real key. The ASCII-only version collapsed every Indic name to '', which then
--- made unrelated products look identical.
+-- Strips spacing and punctuation rather than keeping only [:alnum:], so
+-- Devanagari, Tamil and Bengali names keep a real key. Two earlier versions of
+-- this were wrong in the same direction: a-zA-Z0-9 collapsed every Indic name
+-- to '', and [:alnum:] dropped the combining vowel marks, which turned "चीनी"
+-- (sugar) and "चना" (chickpeas) into one key.
 --
 -- Known, accepted divergence from the TypeScript version: it folds accents
 -- ("café" -> "cafe") and this does not, because unaccent is not assumed to be
@@ -61,7 +63,7 @@ language sql
 immutable
 as $$
   with compact as (
-    select lower(regexp_replace(coalesce(p_name, ''), '[^[:alnum:]]+', '', 'g')) as name
+    select lower(regexp_replace(coalesce(p_name, ''), '[[:space:][:punct:]]+', '', 'g')) as name
   )
   select case
     when name in ('aata', 'flour', 'wheatflour') then 'atta'

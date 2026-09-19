@@ -1,7 +1,24 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "@playwright/test";
 
+// The tests talk to the same Supabase project the app does, so they need the
+// same credentials. Next loads .env.local for the app; nothing loads it here.
+try {
+  for (const line of readFileSync(".env.local", "utf8").split("\n")) {
+    const match = /^([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+    if (match && !process.env[match[1]]) process.env[match[1]] = match[2];
+  }
+} catch {
+  // No .env.local: the suite will fail loudly on the first query instead.
+}
+
 const PORT = Number(process.env.PORT ?? 3100);
-const baseURL = `http://127.0.0.1:${PORT}`;
+// Point the suite at a deployed environment instead of a local build:
+//   E2E_BASE_URL=https://shelf-mu-rose.vercel.app npx playwright test
+// Note the suite empties the catalog between tests, so only aim it at an
+// environment whose data you are willing to lose.
+const deployedURL = process.env.E2E_BASE_URL;
+const baseURL = deployedURL ?? `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -24,7 +41,8 @@ export default defineConfig({
       args: ["--use-fake-device-for-media-stream"],
     },
   },
-  webServer: {
+  // Nothing to start when testing a deployment.
+  webServer: deployedURL ? undefined : {
     // A production build rather than `next dev`: it is what actually ships,
     // and `next dev` refuses to start when another dev server is already
     // running on the machine.

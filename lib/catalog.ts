@@ -55,9 +55,11 @@ export function canonicalProductName(value: string): string {
     // Latin combining marks only, so "café" folds to "cafe" while Devanagari
     // and Tamil matras — which carry meaning — survive.
     .replace(/[̀-ͯ]/g, "")
-    // Keep every script's letters and digits. An ASCII-only strip collapsed
-    // "चीनी" and "आटा" to the same empty key and merged unrelated products.
-    .replace(/[^\p{L}\p{N}]+/gu, "");
+    // Keep every script's letters, digits and combining marks. An ASCII-only
+    // strip collapsed "चीनी" and "आटा" to the same empty key. Marks have to
+    // stay too: Indic vowel signs are marks, not letters, so dropping them
+    // turns "चीनी" (sugar) and "चना" (chickpeas) into the same key.
+    .replace(/[^\p{L}\p{N}\p{M}]+/gu, "");
   return NAME_ALIASES[compact] ?? compact;
 }
 

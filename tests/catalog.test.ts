@@ -34,6 +34,16 @@ describe("canonicalProductName", () => {
     assert.notEqual(sugar, tamil);
   });
 
+  it("keeps Indic vowel marks, which distinguish real products", () => {
+    // Vowel signs are combining marks, not letters. Dropping them made
+    // चीनी (sugar) and चना (chickpeas) the same key — both became "चन".
+    assert.notEqual(canonicalProductName("चीनी"), canonicalProductName("चना"));
+    assert.notEqual(canonicalProductName("आटा"), canonicalProductName("आट"));
+    assert.equal(canonicalProductName("चीनी"), "चीनी");
+    // Still insensitive to the punctuation and spacing around them.
+    assert.equal(canonicalProductName(" चीनी! "), canonicalProductName("चीनी"));
+  });
+
   it("is stable when applied twice", () => {
     for (const name of ["Aata", "चीनी", "Parle-G", "Café"]) {
       assert.equal(canonicalProductName(canonicalProductName(name)), canonicalProductName(name));

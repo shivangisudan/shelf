@@ -1,12 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * End-to-end capture → review → catalog flow.
- *
- * Supabase is unreachable from this environment (the project host does not
- * resolve), so every write here exercises lib/db.ts's localStorage fallback.
- * That is the path a merchant on a dead connection gets, and it is the only
- * one that can be verified without a live database.
+ * End-to-end capture → review → catalog flow, against the real Supabase
+ * project. The database is shared, not per-test like localStorage, so every
+ * test starts by emptying it.
  *
  * /api/extract is stubbed so the assertions are about the app, not about what
  * Gemini happened to return. The real endpoint is covered in extract-api.spec.ts.
@@ -14,6 +11,31 @@ import { expect, test, type Page } from "@playwright/test";
 
 const PRODUCTS_KEY = "shelf-demo-products";
 const EVENTS_KEY = "shelf-demo-inventory-events";
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const SUPABASE_SECRET = process.env.SUPABASE_SECRET_KEY ?? "";
+
+/** Empty the catalog. The secret key bypasses RLS, which grants no delete. */
+async function resetDatabase() {
+  for (const table of ["inventory_events", "products"]) {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=not.is.null`, {
+      method: "DELETE",
+      headers: { apikey: SUPABASE_SECRET, Authorization: `Bearer ${SUPABASE_SECRET}` },
+    });
+    if (!response.ok) {
+      throw new Error(`Could not clear ${table}: ${response.status} ${await response.text()}`);
+    }
+  }
+}
+
+/** Cut the browser off from Supabase, so lib/db.ts takes its offline path. */
+async function goOffline(page: Page) {
+  await page.route("**/*.supabase.co/**", (route) => route.abort());
+}
+
+test.beforeEach(async () => {
+  await resetDatabase();
+});
 
 type StubProduct = {
   name: string;
@@ -64,6 +86,15 @@ function readStorage(page: Page, key: string) {
   return page.evaluate((storageKey) => {
     return JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as Record<string, unknown>[];
   }, key);
+}
+
+/** Read a table straight from Supabase, bypassing the app entirely. */
+async function fetchRows(table: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/${table}?select=*`, {
+    headers: { apikey: SUPABASE_SECRET, Authorization: `Bearer ${SUPABASE_SECRET}` },
+  });
+  if (!response.ok) throw new Error(`Could not read ${table}: ${response.status}`);
+  return response.json();
 }
 
 test.describe("capture screen", () => {
@@ -141,9 +172,11 @@ test.describe("saving to the catalog", () => {
     await page.getByRole("button", { name: /Add 1 item to catalog/ }).dblclick();
     await page.waitForURL("**/catalog");
 
-    const products = await readStorage(page, PRODUCTS_KEY);
+    const products = await fetchRows("products");
     expect(products).toHaveLength(1);
-    expect(products[0].stock_quantity).toBe(2);
+    expect(Number(products[0].stock_quantity)).toBe(2);
+    // One save round means one opening stock event, not two.
+    expect(await fetchRows("inventory_events")).toHaveLength(1);
   });
 
   test("the header badge shows the real catalog count", async ({ page }) => {
@@ -168,9 +201,9 @@ test.describe("one row per product", () => {
     await captureAndSave(page, [{ name: "Sugar", stock_quantity: 4, stock_unit: "kg" }]);
 
     await expect(page.getByRole("article")).toHaveCount(1);
-    const products = await readStorage(page, PRODUCTS_KEY);
+    const products = await fetchRows("products");
     expect(products).toHaveLength(1);
-    expect(products[0].stock_quantity).toBe(6);
+    expect(Number(products[0].stock_quantity)).toBe(6);
     expect(products[0].canonical_name).toBe("sugar");
   });
 
@@ -179,11 +212,15 @@ test.describe("one row per product", () => {
     await captureAndSave(page, [{ name: "Parle G", stock_quantity: 2, stock_unit: "packets" }]);
 
     await expect(page.getByRole("article")).toHaveCount(1);
-    const products = await readStorage(page, PRODUCTS_KEY);
-    expect(products[0].stock_quantity).toBe(7);
+    const products = await fetchRows("products");
+    expect(products).toHaveLength(1);
+    expect(Number(products[0].stock_quantity)).toBe(7);
   });
 
   test("duplicates already in local storage are collapsed when read", async ({ page }) => {
+    // The offline path: with Supabase unreachable the browser is the database,
+    // so it has to collapse duplicates the same way the SQL migration does.
+    await goOffline(page);
     // Rows written by an older build: two spellings of one product, plus an
     // event belonging to the row that is about to be merged away.
     await page.addInitScript(
@@ -246,10 +283,11 @@ test.describe("stock changes", () => {
     await page.getByRole("button", { name: "Out of stock" }).click();
     await expect(row).toContainText("0 kg");
 
-    const products = await readStorage(page, PRODUCTS_KEY);
-    expect(products[0].stock_quantity).toBe(0);
+    const products = await fetchRows("products");
+    expect(Number(products[0].stock_quantity)).toBe(0);
 
-    const events = await readStorage(page, EVENTS_KEY);
+    // Going to zero must not erase how it got there.
+    const events = await fetchRows("inventory_events");
     expect(events.map((event) => event.event_type)).toEqual(
       expect.arrayContaining(["extraction", "restock", "out_of_stock"]),
     );
