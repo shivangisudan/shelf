@@ -344,4 +344,4 @@ For issues, feature requests, or questions:
 ---
 
 **Last Updated:** September 2026  
-**Version:** 0.1.0
+**Version:** 0.0.1 (beta)
